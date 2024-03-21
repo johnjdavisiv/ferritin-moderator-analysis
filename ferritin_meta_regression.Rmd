@@ -1,0 +1,532 @@
+---
+title: "Ferritin meta-regression"
+author: "John J Davis, PhD"
+date: "2024-03-13"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(metafor)
+library(cowplot)
+library(knitr)
+library(mgcv)
+
+
+```
+
+## Meta-regression of ferritin data from Smid et al. 2024
+
+
+[Smid et al. 2024](https://link.springer.com/article/10.1007/s40279-024-01992-8) provide data from 13 studies on oral iron supplementation in athletes, totaling N=449 subjects.  Data from this meta-analysis were aggragated using tables in the intial publication and digitization of scatterpoints in Figure 8 in the manuscript.  
+
+
+```{r read_data}
+
+#Read data and display a glimpse
+df <- read_csv("smid_data.csv", show_col_types = FALSE)
+df %>% glimpse()
+
+
+```
+
+## Intial ferritin and ferritin increase from iron supplements
+
+First, reproduce the unstratified meta-analysis of Smid et al. to ensure we get the same results. 
+
+
+```{r ferritin_forest}
+
+#Smid et al. used SPSS, whose default method is REML random effects
+meta <- rma(ferritin_effect_size_smd, sei = ferritin_std_error_smd, slab=id, 
+            data = df, method="REML", measure="SMD") 
+meta
+
+
+# --- Make forest plot ----
+forest(meta, header="Study", mlab="Overall pooled results", cex=1.0,
+       main="Effect of iron supplements on ferritin level",
+       cex.main = 1.5)
+
+
+```
+
+Smid et al. report an overall effect size of 1.27 (0.44, 2.10); the minor differences in the 95% confidence intervals of this estimate are likely due to implementation differences in REML estimation in `metafor` vs. SPSS.  
+
+
+### Semi-parametric meta-regression
+
+Visual inspection of the effect size vs. initial ferritin level suggets a smooth, nonlinear relationship:  
+
+```{r ferritin_bubble, echo=FALSE}
+
+#Plot parameters
+point_fill <- "#deebf7"
+point_color <- "black"
+
+lwd <- 1
+draw_lwd <- 0.5
+fnt <- 14
+title_fnt <- 14
+subtitle_fnt <- 12
+wm_fnt <- 12
+hline_lwd <- 0.75
+grid_lwd <- 0.5
+alf <- 0.5
+bubble_min <- 2
+bubble_max <- 9
+
+
+plt <- df %>%
+  #Scale bubble by inverse of standard error
+  ggplot(aes(x=initial_ferritin_ng_ml, y=ferritin_effect_size_smd, size=2/ferritin_std_error_smd)) +
+  #Study bubbles
+  geom_point(shape=21,
+             fill = point_fill,
+             stroke = 0.2,
+             color = point_color) + 
+  #Change point sizing
+  scale_size(guide="none", range=c(bubble_min,bubble_max)) +
+  #Set axis limits
+  scale_x_continuous(limits = c(0,50), expand = c(0,0),
+                     breaks = seq(0,50, by=5),
+                     name = "Ferritin level (ng/mL)") + 
+  scale_y_continuous(limits = c(-1,8), expand = c(0,0),
+                     breaks = seq(-2,8,by=1),
+                     name = "Ferritin increase (effect size)") + 
+  coord_cartesian(ylim = c(-1,6.5))+
+  ggtitle(label = "Ferritin increase from iron supplements, as a function of initial ferritin level", 
+          subtitle = "Data from Smid et al. 2024") + 
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5, size=title_fnt),
+        plot.caption.position = "panel",
+        plot.subtitle = element_text(hjust = 0.5, size=subtitle_fnt),
+        panel.grid.major = element_line(linewidth = grid_lwd),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = fnt, color = "black"),
+        axis.text = element_text(size = fnt, color = "black"))
+plt
+
+
+
+```
+
+
+The code below implements a moderator analysis, which treats inital serum ferritin as a smooth and potentially nonlinear moderator of the effects of iron supplementation on serum ferritin increases. The effect is modeled using a cubic regression spline basis, as implemented in `mgcv` and the meta-regression package `metafor`. The analysis below follows the [official metafor tutorial documentation here.](https://www.metafor-project.org/doku.php/tips:non_linear_meta_regression) See the end of this document for a sensitivity analysis of `K`, the number of knots in the spline basis.  
+
+
+```{r ferritin_metareg}
+
+#X-grid for plotting
+xs <- seq(5, 50, length=500)
+
+# --- Linear fit, purely for plotting purposes --- 
+# do note we pass sei (standard errors) here, not the default variance
+# See https://www.metafor-project.org/doku.php/tips:input_to_rma_function for details
+res.lin <- rma(ferritin_effect_size_smd, sei = ferritin_std_error_smd, slab=id, 
+               mods = ~ initial_ferritin_ng_ml,
+               data = df, method="REML", measure="SMD")
+
+# --- Smooth nonlinear meta-regression ---
+# Adapted from https://www.metafor-project.org/doku.php/tips:non_linear_meta_regression
+
+#Number of knots for spline fit, using sqrt(N) approximate rule (Harezlak et al.)
+K <- 4 #See later for sensitivity analysis
+
+
+#Construct a cubic spline basis in mgcv with K knots
+sm <- smoothCon(s(initial_ferritin_ng_ml, bs="cr", k=K), data=df, absorb.cons=TRUE)[[1]]
+
+#Do REML-based meta-regression, using the spline basis above as moderator
+res_fer <- rma(ferritin_effect_size_smd, sei = ferritin_std_error_smd, slab=id, 
+               mods = ~ sm$X,
+               data = df, method="REML", measure="SMD")
+#Show results
+res_fer
+
+#Make raw plot using metafor's base R plotting capabilities
+sav <- predict(res_fer, newmods=PredictMat(sm, data.frame(initial_ferritin_ng_ml=xs)))
+regplot(res.lin, mod=2, pred=sav, xvals=xs, las=1, digits=1, bty="l",
+        psize=.75/df$ferritin_std_error_smd, 
+        xlab="Initial ferritin (ng/mL)", main="Cubic spline model")
+
+
+```
+
+
+Note that because of the weighting, smaller studies have less of an influence on the spline fit.  
+
+The results of the moderator analysis strongly suggest that initial ferritin level is a significant moderator of the effects of iron supplementation on serum ferritin increase (omnibus test p-value: `r sprintf("%1.2e", res_fer$QMp)`).  
+
+
+
+## Initial ferritin level and VO2max
+
+We can also conduct a similar analysis for VO2max gains after iron supplementation. Note that only ten of the 13 studies reported VO2max data, hence the `NA` warning below.  
+
+
+Again, we'll start by replicating the meta-analysis and forest plots.  
+
+
+```{r vo2max_forest}
+
+
+meta_vo2 <- rma(vo2max_effect_size, sei = vo2max_std_error, slab=id, 
+            data = df, method="REML", measure="SMD")
+meta_vo2
+
+# --- Make forest plot ----
+forest(meta_vo2, header="Study", mlab="Overall pooled results", cex=1.0,
+       main="Effect of iron supplements on VO2max",
+       cex.main = 1.5)
+
+
+
+```
+
+Smid et al. report an overall pooled result of 0.49 (-0.08, 1.07).  
+
+
+### Semi-parametric meta-regression
+
+Again, a visual inspection of the VO2max effect size vs. initial ferritin level suggets a smooth, nonlinear relationship:  
+
+
+
+
+```{r vo2max_bubble, echo=FALSE, warning=FALSE}
+
+
+#Plot parameters
+point_fill <- "#bcbddc"
+point_color <- "black"
+
+
+plt <- df %>%
+  #Scale bubble by inverse of standard error
+  ggplot(aes(x=initial_ferritin_ng_ml, y=vo2max_effect_size, size=2/vo2max_std_error)) +
+  #Study bubbles
+  geom_point(shape=21,
+             fill = point_fill,
+             stroke = 0.2,
+             color = point_color) + 
+  #Change point sizing
+  scale_size(guide="none", range=c(bubble_min,bubble_max)) +
+  #Set axis limits
+  scale_x_continuous(limits = c(0,50), expand = c(0,0),
+                     breaks = seq(0,50, by=5),
+                     name = "Ferritin level (ng/mL)") + 
+  scale_y_continuous(limits = c(-1,8), expand = c(0,0),
+                     breaks = seq(-2,8,by=1),
+                     name = "VO2max increase (effect size)") + 
+  coord_cartesian(ylim = c(-1,6.5))+
+  ggtitle(label = "VO2max increase from iron supplements, as a function of initial ferritin level", 
+          subtitle = "Data from Smid et al. 2024") + 
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5, size=title_fnt),
+        plot.caption.position = "panel",
+        plot.subtitle = element_text(hjust = 0.5, size=subtitle_fnt),
+        panel.grid.major = element_line(linewidth = grid_lwd),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = fnt, color = "black"),
+        axis.text = element_text(size = fnt, color = "black"))
+plt
+
+
+
+```
+
+The code below implements a similar semiparametric moderator analysis as above.  
+
+
+```{r vo2max_metareg}
+
+#Don't use all data for spline basis, just studies with VO2 measurements
+df_vo2 <- df %>%
+  drop_na(vo2max_effect_size)
+
+
+#Plotting setup 
+xs_vo2 <- seq(5, 35, length=500) #no VO2 data for the higher ranges
+
+# --- Linear fit, purely for plotting purposes --- 
+res.lin_vo2 <- rma(vo2max_effect_size, sei = vo2max_std_error, slab=id, 
+               mods = ~ initial_ferritin_ng_ml,
+               data = df_vo2, method="REML", measure="SMD")
+
+# --- Smooth nonlinear meta-regression ---
+
+K <- 3 #Fewer studies, fewer knots
+sm <- smoothCon(s(initial_ferritin_ng_ml, bs="cr", k=K), data=df_vo2, absorb.cons=TRUE)[[1]]
+res_vo2 <- rma(vo2max_effect_size, sei = vo2max_std_error, slab=id, 
+               mods = ~ sm$X,
+               data = df_vo2, method="REML", measure="SMD")
+res_vo2
+
+sav_vo2 <- predict(res_vo2, newmods=PredictMat(sm, data.frame(initial_ferritin_ng_ml=xs_vo2)))
+regplot(res.lin_vo2, mod=2, pred=sav_vo2, xvals=xs_vo2, las=1, digits=1, bty="l",
+        psize=.75/df_vo2$vo2max_std_error, 
+        xlab="Initial ferritin (ng/mL)", main="Cubic spline model")
+
+
+```
+
+
+As above, the results of the moderator analysis strongly suggest that initial ferritin level is a significant moderator of the effects of iron supplementation on VO2max increase (omnibus test p-value: `r sprintf("%.4f", res_vo2$QMp)`).  
+
+Notably, the borderline significant results from the standard pooled analysis earlier (p = `r sprintf("%.4f", meta_vo2$pval)`) are now definitively significant at the 0.05 level.   
+
+
+
+```{r publication_plots, echo=FALSE}
+
+
+#Get p-values for omnibus test of moderator effect
+# (null hypothesis: moderator curve is zero everywhere)
+ferritin_omni_p <- res_fer$QMp
+vo2_omni_p <- res_vo2$QMp
+
+ferritin_ant_p <- "p < 0.001" #10e-13...
+vo2_ant_p <- sprintf("p = %.3f", vo2_omni_p)
+
+
+#Fetch meta-regression results for publication plots
+met_plot <- data.frame(ferritin = xs,
+                      yhat = sav$pred,
+                      ci_lo = sav$ci.lb,
+                      ci_hi = sav$ci.ub)
+
+met_plot_vo2 <- data.frame(ferritin = xs_vo2,
+                       yhat = sav_vo2$pred,
+                       ci_lo = sav_vo2$ci.lb,
+                       ci_hi = sav_vo2$ci.ub)
+
+
+#Combine and make publication-ready plots
+
+#6.5" by ahfl that? 3.25
+
+
+# --- Ferritin plot ---
+
+
+
+point_fill <- "#deebf7"
+point_color <- "black"
+
+lwd <- 0.75
+draw_lwd <- 0.15
+fnt <- 8
+title_fnt <- 8
+subtitle_fnt <- 6
+wm_fnt <- 7
+hline_lwd <- 0.25
+grid_lwd <- 0.2
+
+alf <- 0.2
+
+
+bubble_min <- 0.75
+bubble_max <- 4
+
+ant_fnt <- 3
+ant_x <- 49.5
+ant_y <- 6.4
+
+#, range=c(0.5,4)
+
+plt_1 <- met_plot %>%
+  ggplot(aes(x=ferritin, y=yhat)) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = hline_lwd) + 
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), fill = "#3182bd", alpha = alf) + 
+  geom_line(color = "#3182bd", linewidth = lwd) + 
+  #Omnibus moderator test p-value
+  annotate("text", x=ant_x, y=ant_y, label = ferritin_ant_p, size=ant_fnt,
+           hjust = 1, vjust=1) + 
+  #Study bubbles
+  geom_point(aes(x=initial_ferritin_ng_ml , y=ferritin_effect_size_smd, size=2/ferritin_std_error_smd ),
+             data = df, 
+             shape=21,
+             fill = point_fill,
+             stroke = 0.2,
+             color = point_color) + 
+  
+  #Change point sizing
+  scale_size(guide="none", range=c(bubble_min,bubble_max)) +
+  #Set axis limits
+  scale_x_continuous(limits = c(0,50), expand = c(0,0),
+                     breaks = seq(0,50, by=5),
+                     name = "Initial serum ferritin level (\u03bcg/L)") +  
+  scale_y_continuous(limits = c(-1,8), expand = c(0,0),
+                     breaks = seq(-2,8,by=1),
+                     name = "Serum ferritin increase (SMD)") + 
+  coord_cartesian(ylim = c(-1,6.5))+
+  ggtitle(label = "Serum ferritin increase from oral iron supplementation") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5, size=title_fnt),
+        plot.caption.position = "panel",
+        plot.caption = element_text(face = "bold", size = wm_fnt, vjust=0),
+        plot.subtitle = element_text(hjust = 0.5, size=subtitle_fnt),
+        panel.grid.major = element_line(linewidth = grid_lwd),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = fnt, color = "black"),
+        axis.text = element_text(size = fnt, color = "black"))
+
+plt_1
+
+
+# --- VO2max ---
+point_fill <- "#efedf5"
+point_color <- "black"
+
+line_col <- "#756bb1"
+rib_col <- "#756bb1"
+
+
+plt_2 <- met_plot_vo2 %>%
+  ggplot(aes(x=ferritin, y=yhat)) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = hline_lwd) + 
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), fill = rib_col, alpha = alf) + 
+  geom_line(color = line_col, linewidth = lwd) + 
+  #Omnibus moderator test p-value
+  annotate("text", x=ant_x, y=ant_y, label = vo2_ant_p, size=ant_fnt,
+           hjust = 1, vjust=1) + 
+  #Study bubbles
+  geom_point(aes(x=initial_ferritin_ng_ml , y=vo2max_effect_size, size=2/vo2max_std_error),
+             data = df_vo2, 
+             shape=21,
+             fill = point_fill,
+             stroke = 0.2,
+             color = point_color) + 
+  #Change point sizing
+  scale_size(guide="none", range=c(bubble_min,bubble_max)) +
+  #Set axis limits
+  scale_x_continuous(limits = c(0,50), expand = c(0,0),
+                     breaks = seq(0,50, by=5),
+                     name = "Initial serum ferritin level (\u03bcg/L)") +  
+  scale_y_continuous(limits = c(-2,8), expand = c(0,0),
+                     breaks = seq(-2,8,by=1),
+                     name = "VO2max increase (SMD)") + 
+  coord_cartesian(ylim = c(-1,6.5))+
+  ggtitle(label = "VO2max increase from oral iron supplementation") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5, size=title_fnt),
+        plot.caption.position = "panel",
+        plot.caption = element_text(face = "bold", size = wm_fnt, vjust=0),
+        plot.subtitle = element_text(hjust = 0.5, size=subtitle_fnt),
+        panel.grid.major = element_line(linewidth = grid_lwd),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = fnt, color = "black"),
+        axis.text = element_text(size = fnt, color = "black"))
+
+plt_2
+
+
+#Combine and save
+cow <- plot_grid(plt_1, plt_2, nrow=1)
+ggsave("Figure 1 - Moderating effects of initial ferritin on effects of iron supplementation in athletes.png", 
+       plot=cow, width = 6.5, height = 3, units = "in", dpi=600)
+
+
+
+```
+
+
+
+## Knot number sensitivity analysis
+
+
+Assess whether choice of `K` has a strong bearing on the shape of the results.  
+
+```{r sens_analysis}
+
+#Eval grid
+xs <- seq(5, 50, length=500)
+K_vals <- c(3,4,5,6) #Knots to test
+
+#Define function to use in loop
+fit_mod <- function(yi, sei, mod_vals, K, xs){
+  #Do semipar meta-regression, evaluate on grid, and return evaluated curve
+  df_dummy <- data.frame(yi = yi, 
+                         sei = sei,
+                         mod_vals = mod_vals)
+  #Spline basis
+  sm <- smoothCon(s(mod_vals, bs="cr", k=K), data=df_dummy, absorb.cons=TRUE)[[1]]
+  
+  res_spline <- rma(yi=yi, sei=sei,
+                    mods = ~ sm$X,
+                    data = df_dummy, method="REML", measure="SMD")
+  sav_spline <- predict(res_spline, newmods=PredictMat(sm, data.frame(mod_vals=xs)))
+  
+  plot_df <- data.frame(mod_vals = xs,
+                      yhat = sav_spline$pred,
+                      ci_lo = sav_spline$ci.lb,
+                      ci_hi = sav_spline$ci.ub,
+                      K=K)
+  return(plot_df)
+}
+
+# --- Ferritin increase sensitivity ---
+mod_vals <- df$initial_ferritin_ng_ml
+yi <- df$ferritin_effect_size_smd
+sei <- df$ferritin_std_error_smd
+
+result_list <- list()
+
+for (i in 1:length(K_vals)){
+  result_list[[i]] <- fit_mod(yi, sei, mod_vals, K_vals[i], xs)
+}
+
+ferritin_sens <- bind_rows(result_list) %>% mutate(K = factor(K))
+
+ferritin_sens_plot <- ferritin_sens %>%
+  ggplot(aes(x=mod_vals, y=yhat, color=K)) + 
+  geom_line(linewidth=1.5, alpha = 0.7) + 
+  scale_x_continuous(limits = c(0,50)) + 
+  ggtitle("K sensitivity analysis - ferritin increase")
+
+ferritin_sens_plot
+
+
+# --- VO2max ---
+
+
+#Eval grid
+xs <- seq(5, 35, length=500)
+K_vals <- c(3,4,5) #10 studies, no sense using 6 knots
+
+#Data
+mod_vals <- df_vo2$initial_ferritin_ng_ml
+yi <- df_vo2$vo2max_effect_size
+sei <- df_vo2$vo2max_std_error
+
+result_list <- list()
+
+for (i in 1:length(K_vals)){
+  result_list[[i]] <- fit_mod(yi, sei, mod_vals, K_vals[i], xs)
+}
+
+vo2_sens <- bind_rows(result_list) %>% mutate(K = factor(K))
+
+vo2_sens_plot <- vo2_sens %>%
+  ggplot(aes(x=mod_vals, y=yhat, color=K)) + 
+  geom_line(linewidth=1.5, alpha = 0.7) +  
+  scale_x_continuous(limits = c(0,50)) + 
+  ggtitle("K sensitivity analysis - VO2max increase")
+
+vo2_sens_plot
+
+
+```
+
+
+For increased serum ferritin, the choice of K does not have a particularly strong effect on the results in the 10-25 ng/mL range. `K=3` is likely too small, given its less-plausible U-shaped curve.  
+
+For increased VO2max, the choice of K has a modest effect on estimated benefits of iron supplementation in the 10-25 ng/mL range. All three choices still show a definite increase in VO2max at low levels of ferritin, with the "wiggles" near 15 ng/mL for `K=4` and `K=5` likely attributable to the dearth of studies with initial ferrtin levels of 17-25 ng/mL.  
+
+
+

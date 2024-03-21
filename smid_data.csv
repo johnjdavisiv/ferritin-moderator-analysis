@@ -1,0 +1,14 @@
+id,n_exp,n_control,n_male,ferritin_effect_size_smd,ferritin_std_error_smd,ferritin_lower_ci,ferritin_upper_ci,p_value,weight,weight_pct,supplement_dose_mg_per_day,elemental_iron_dose_mg_per_day,intervention_length_weeks,training_continued,pedro_score,initial_ferritin_ng_ml,vo2max_effect_size,vo2max_std_error
+Ishibashi et al. 2017,7,7,14,0.37,0.54,-0.69,1.43,0.49,0.58,7.54,120,24,0.42857,yes,9,43.04147465,NA,NA
+DellaValle and Haas 2014,15,16,0,0.36,0.36,-0.35,1.07,0.32,0.63,8.3,100,15.8,6,yes,10,26.87,-0.15,0.36
+Radjen et al. 2011,9,8,0,4.71,0.94,2.86,6.56,0,0.43,5.6,200,40,8,no,7,10.35,0.34,0.49
+McClung et al. 2009,83,82,0,0.42,0.16,0.12,0.73,0.01,0.68,8.9,100,15,8,yes,10,38.41,NA,NA
+Hinton and Sinclair 2007,10,10,3,1.05,0.48,0.11,1.98,0.03,0.6,7.82,150,30,6,yes,10,15.18,0.03,0.45
+Kang and Matsuo 2004,11,14,0,0.17,0.4,-0.62,0.96,0.67,0.62,8.13,200,40,4,no,8,19.12,NA,NA
+Hinton et al. 2000,22,20,0,3.28,0.47,2.35,4.2,0,0.6,7.84,100,20,6,no,10,9.31,1.91,0.37
+LaManca and Haymes 1993,10,10,0,3,0.65,1.73,4.28,0,0.53,6.99,318,100,8,no,10,11.11,2.08,0.56
+Klingshirn et al. 1992,9,9,0,0.92,0.5,-0.05,1.89,0.06,0.59,7.73,320,100,8,no,10,11.87,0.15,0.47
+Powell and Tucker 1991,10,10,0,0.32,0.45,-0.56,1.2,0.48,0.61,7.94,650,130,2,no,6,29.22,-0.3,0.48
+Magazanik et al. 1991,13,15,0,0.03,0.38,-0.71,0.77,0.93,0.63,8.23,160,32,6,yes,10,20.85,0.4,0.38
+Yoshida et al. 1990,6,6,0,2.09,0.72,0.68,3.5,0,0.51,6.67,200,60,8,no,8,15.94,0.29,0.58
+Newhouse et al. 1989,19,18,0,1.32,0.36,0.6,2.03,0,0.63,8.29,320,100,8,no,10,12.42,0.3,0.33
